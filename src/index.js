@@ -5,6 +5,7 @@ var isFn = function(value) {
 }
 
 function makeLoggerApp(log, nextApp) {
+  var dispatchedActionStack = []
   return function(initialState, actionsTemplate, view, container) {
     function enhanceActions(actions, prefix) {
       var namespace = prefix ? prefix + "." : ""
@@ -13,18 +14,54 @@ function makeLoggerApp(log, nextApp) {
         var action = actions[name]
         otherActions[name] =
           typeof action === "function"
-            ? function(data) {
-                return function(state, actions) {
-                  var result = action(data)
-                  result =
-                    typeof result === "function"
-                      ? result(state, actions)
-                      : result
-                  log(state, { name: namedspacedName, data: data }, result)
-                  return result
+            ? (function() {
+                var rename = "_" + name
+
+                if (!otherActions._logWithUpdatedState) {
+                  otherActions._logWithUpdatedState = function() {
+                    return function(state) {
+                      var dispatchedActionDetails = dispatchedActionStack.pop()
+                      log(
+                        dispatchedActionDetails.state,
+                        {
+                          name: dispatchedActionDetails.name,
+                          data: dispatchedActionDetails.data
+                        },
+                        state
+                      )
+                    }
+                  }
                 }
-              }
+
+                otherActions[rename] = function(data) {
+                  return function(state, actions) {
+                    var result = action(data)
+
+                    result =
+                      typeof result === "function"
+                        ? result(state, actions)
+                        : result
+
+                    dispatchedActionStack.push({
+                      name: namedspacedName,
+                      data: data,
+                      state: state
+                    })
+
+                    return result
+                  }
+                }
+
+                return function(data) {
+                  return function(state, actions) {
+                    var result = actions[rename](data)
+                    actions._logWithUpdatedState()
+                    return result
+                  }
+                }
+              })()
             : enhanceActions(action, namedspacedName)
+
         return otherActions
       }, {})
     }
